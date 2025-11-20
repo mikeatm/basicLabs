@@ -274,8 +274,10 @@ const VectorAdditionPlayground = () => {
   const handleMouseDown = (e) => {
     const canvas = canvasRef.current;
     const rect = canvas.getBoundingClientRect();
-    const mouseX = e.clientX - rect.left;
-    const mouseY = e.clientY - rect.top;
+    const scaleX = canvas.width / rect.width;
+    const scaleY = canvas.height / rect.height;
+    const mouseX = (e.clientX - rect.left) * scaleX;
+    const mouseY = (e.clientY - rect.top) * scaleY;
 
     // Check if clicking near any vector endpoint
     for (const vector of vectors) {
@@ -283,8 +285,9 @@ const VectorAdditionPlayground = () => {
       const endY = ORIGIN_Y - vector.y * scale;
       const distance = Math.sqrt(Math.pow(mouseX - endX, 2) + Math.pow(mouseY - endY, 2));
       
-      if (distance < 20) {
+      if (distance < 25) {
         setDragging(vector.id);
+        e.preventDefault();
         break;
       }
     }
@@ -295,8 +298,10 @@ const VectorAdditionPlayground = () => {
     
     const canvas = canvasRef.current;
     const rect = canvas.getBoundingClientRect();
-    const mouseX = e.clientX - rect.left;
-    const mouseY = e.clientY - rect.top;
+    const scaleX = canvas.width / rect.width;
+    const scaleY = canvas.height / rect.height;
+    const mouseX = (e.clientX - rect.left) * scaleX;
+    const mouseY = (e.clientY - rect.top) * scaleY;
     
     const newX = (mouseX - ORIGIN_X) / scale;
     const newY = -(mouseY - ORIGIN_Y) / scale;
@@ -307,6 +312,52 @@ const VectorAdditionPlayground = () => {
   };
 
   const handleMouseUp = () => {
+    setDragging(null);
+  };
+
+  const handleTouchStart = (e) => {
+    const canvas = canvasRef.current;
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = canvas.width / rect.width;
+    const scaleY = canvas.height / rect.height;
+    const touch = e.touches[0];
+    const mouseX = (touch.clientX - rect.left) * scaleX;
+    const mouseY = (touch.clientY - rect.top) * scaleY;
+
+    for (const vector of vectors) {
+      const endX = ORIGIN_X + vector.x * scale;
+      const endY = ORIGIN_Y - vector.y * scale;
+      const distance = Math.sqrt(Math.pow(mouseX - endX, 2) + Math.pow(mouseY - endY, 2));
+      
+      if (distance < 25) {
+        setDragging(vector.id);
+        e.preventDefault();
+        break;
+      }
+    }
+  };
+
+  const handleTouchMove = (e) => {
+    if (!dragging) return;
+    e.preventDefault();
+    
+    const canvas = canvasRef.current;
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = canvas.width / rect.width;
+    const scaleY = canvas.height / rect.height;
+    const touch = e.touches[0];
+    const mouseX = (touch.clientX - rect.left) * scaleX;
+    const mouseY = (touch.clientY - rect.top) * scaleY;
+    
+    const newX = (mouseX - ORIGIN_X) / scale;
+    const newY = -(mouseY - ORIGIN_Y) / scale;
+    
+    setVectors(vectors.map(v => 
+      v.id === dragging ? { ...v, x: newX, y: newY } : v
+    ));
+  };
+
+  const handleTouchEnd = () => {
     setDragging(null);
   };
 
@@ -337,7 +388,10 @@ const VectorAdditionPlayground = () => {
                 onMouseMove={handleMouseMove}
                 onMouseUp={handleMouseUp}
                 onMouseLeave={handleMouseUp}
-                className="rounded-lg cursor-crosshair w-full"
+                onTouchStart={handleTouchStart}
+                onTouchMove={handleTouchMove}
+                onTouchEnd={handleTouchEnd}
+                className="rounded-lg cursor-crosshair w-full touch-none"
                 style={{ maxWidth: '100%', height: 'auto' }}
               />
             </div>

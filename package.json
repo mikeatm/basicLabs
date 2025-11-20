@@ -1,8 +1,8 @@
 {
-  "name": "vector-addition-playground",
+  "name": "basicLabs",
   "version": "1.0.0",
   "private": true,
-  "homepage": "https://yourusername.github.io/vector-addition-app",
+  "homepage": "https://mikeatm.github.io/basicLabs",
   "dependencies": {
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
