@@ -4,6 +4,29 @@ import {
   Calculator, Brain, CheckCircle2, XCircle, ArrowRight, Waves, Scale, Compass
 } from 'lucide-react';
 
+// --- Added: reusable arrow primitive for the small SVG diagrams below.
+// (The main canvas draws its own arrowheads with canvas 2D calls; these new
+// mini-diagrams use plain SVG instead, since they're static, non-draggable
+// illustrations and don't need a canvas ref/useEffect of their own.)
+const SvgArrow = ({ x1, y1, x2, y2, color, width = 2.5, dashed = false }) => {
+  const angle = Math.atan2(y2 - y1, x2 - x1);
+  const headLen = 8;
+  const hx1 = x2 - headLen * Math.cos(angle - Math.PI / 6);
+  const hy1 = y2 - headLen * Math.sin(angle - Math.PI / 6);
+  const hx2 = x2 - headLen * Math.cos(angle + Math.PI / 6);
+  const hy2 = y2 - headLen * Math.sin(angle + Math.PI / 6);
+  return (
+    <g>
+      <line
+        x1={x1} y1={y1} x2={x2} y2={y2}
+        stroke={color} strokeWidth={width}
+        strokeDasharray={dashed ? '5,4' : undefined}
+      />
+      <polygon points={`${x2},${y2} ${hx1},${hy1} ${hx2},${hy2}`} fill={color} />
+    </g>
+  );
+};
+
 const VectorAdditionPlayground = () => {
   const canvasRef = useRef(null);
   const [vectors, setVectors] = useState([
@@ -236,6 +259,46 @@ const VectorAdditionPlayground = () => {
     return { boatVec, groundVec, groundSpeed, groundAngle, canCross, crossTime, drift };
   };
 
+  // --- Added: velocity-vector mini diagram data (Current, Boat, Ground chained
+  // tail-to-tip, independently auto-scaled — these are m/s, not metres, so they
+  // must NOT share a scale with the trajectory diagram below).
+  const getRiverVelocityDiagram = () => {
+    const river = getRiverSolution();
+    const w = 220, h = 190;
+    const originX = 40, originY = h - 30;
+    const pts = [
+      { x: 0, y: 0 },
+      { x: currentSpeed, y: 0 },
+      { x: river.groundVec.x, y: river.groundVec.y }
+    ];
+    const maxAbsX = Math.max(...pts.map(p => Math.abs(p.x)), 1);
+    const maxAbsY = Math.max(...pts.map(p => Math.abs(p.y)), 1);
+    const scale = Math.min((w - 60) / maxAbsX, (h - 50) / maxAbsY);
+    const toScreen = (x, y) => ({ x: originX + x * scale, y: originY - y * scale });
+    return {
+      w, h,
+      O: toScreen(0, 0),
+      currentTip: toScreen(currentSpeed, 0),
+      groundTip: toScreen(river.groundVec.x, river.groundVec.y),
+      river
+    };
+  };
+
+  // --- Added: top-down trajectory diagram data (metres). Independent scale
+  // from the velocity diagram above — river width always fills the vertical
+  // span exactly; the horizontal span auto-fits the drift.
+  const getRiverTrajectoryDiagram = () => {
+    const river = getRiverSolution();
+    const w = 260, h = 260;
+    const farBankY = 30, nearBankY = 230;
+    const startX = w / 2;
+    const drift = river.canCross ? river.drift : 0;
+    const horizontalExtent = Math.max(Math.abs(drift), 20);
+    const xScale = (w / 2 - 30) / horizontalExtent;
+    const landingX = startX + drift * xScale;
+    return { w, h, farBankY, nearBankY, startX, landingX, river, drift };
+  };
+
   // Solves boatSpeed*cos(theta) = -currentSpeed for the heading that cancels all drift.
   const solveZeroDrift = () => {
     if (currentSpeed >= boatSpeed) {
@@ -273,6 +336,44 @@ const VectorAdditionPlayground = () => {
     let f3theta = Math.atan2(f3y, f3x) * 180 / Math.PI;
     if (f3theta < 0) f3theta += 360;
     return { sumX, sumY, f3x, f3y, f3V, f3theta };
+  };
+
+  // --- Added: force-triangle diagram data. F1 then F2 drawn tail-to-tip from
+  // the origin; if the forces truly sum to zero, a correct F3 closes the
+  // triangle back onto the origin — that visual gap *is* the residual.
+  const getEquilibriumDiagram = () => {
+    const rad1 = eqForces.f1.theta * Math.PI / 180;
+    const rad2 = eqForces.f2.theta * Math.PI / 180;
+    const f1vec = { x: eqForces.f1.V * Math.cos(rad1), y: eqForces.f1.V * Math.sin(rad1) };
+    const tip1 = { x: f1vec.x, y: f1vec.y };
+    const tip2 = { x: f1vec.x + eqForces.f2.V * Math.cos(rad2), y: f1vec.y + eqForces.f2.V * Math.sin(rad2) };
+
+    const guessV = parseFloat(eqGuess.V);
+    const guessThetaDisp = parseFloat(eqGuess.theta);
+    let guessTip = null;
+    if (!Number.isNaN(guessV) && !Number.isNaN(guessThetaDisp)) {
+      const gRad = fromDisplayAngle(guessThetaDisp) * Math.PI / 180;
+      guessTip = { x: tip2.x + guessV * Math.cos(gRad), y: tip2.y + guessV * Math.sin(gRad) };
+    }
+
+    const sol = getEquilibriumSolution();
+    const solTip = { x: tip2.x + sol.f3x, y: tip2.y + sol.f3y }; // should land back on origin
+
+    const pts = [{ x: 0, y: 0 }, tip1, tip2, solTip, ...(guessTip ? [guessTip] : [])];
+    const w = 240, h = 240;
+    const originX = w / 2, originY = h / 2;
+    const maxAbs = Math.max(...pts.map(p => Math.max(Math.abs(p.x), Math.abs(p.y))), 1);
+    const scale = (Math.min(w, h) / 2 - 30) / maxAbs;
+    const toScreen = (p) => ({ x: originX + p.x * scale, y: originY - p.y * scale });
+
+    return {
+      w, h,
+      O: toScreen({ x: 0, y: 0 }),
+      tip1: toScreen(tip1),
+      tip2: toScreen(tip2),
+      guessTipScreen: guessTip ? toScreen(guessTip) : null,
+      solTipScreen: toScreen(solTip)
+    };
   };
 
   const checkEquilibriumGuess = () => {
@@ -1131,6 +1232,47 @@ const VectorAdditionPlayground = () => {
                       </label>
                     </div>
 
+                    {/* Added: velocity-vector diagram + top-down trajectory diagram */}
+                    {(() => {
+                      const vel = getRiverVelocityDiagram();
+                      const traj = getRiverTrajectoryDiagram();
+                      return (
+                        <div className="grid grid-cols-2 gap-2 bg-slate-900/40 rounded-lg p-2">
+                          <div>
+                            <svg viewBox={`0 0 ${vel.w} ${vel.h}`} className="w-full h-auto">
+                              <circle cx={vel.O.x} cy={vel.O.y} r={3} fill="#94a3b8" />
+                              <SvgArrow x1={vel.O.x} y1={vel.O.y} x2={vel.currentTip.x} y2={vel.currentTip.y} color="#facc15" />
+                              <SvgArrow x1={vel.currentTip.x} y1={vel.currentTip.y} x2={vel.groundTip.x} y2={vel.groundTip.y} color="#38bdf8" />
+                              <SvgArrow x1={vel.O.x} y1={vel.O.y} x2={vel.groundTip.x} y2={vel.groundTip.y} color="#34d399" width={2} dashed />
+                            </svg>
+                            <div className="text-[10px] text-gray-400 text-center mt-1 space-x-2">
+                              <span className="text-yellow-400">■ current</span>
+                              <span className="text-sky-400">■ boat</span>
+                              <span className="text-emerald-400">■ ground</span>
+                            </div>
+                          </div>
+                          <div>
+                            <svg viewBox={`0 0 ${traj.w} ${traj.h}`} className="w-full h-auto">
+                              <rect x={0} y={traj.farBankY} width={traj.w} height={traj.nearBankY - traj.farBankY} fill="#0ea5e9" opacity={0.12} />
+                              <line x1={0} y1={traj.farBankY} x2={traj.w} y2={traj.farBankY} stroke="#64748b" strokeWidth={2} />
+                              <line x1={0} y1={traj.nearBankY} x2={traj.w} y2={traj.nearBankY} stroke="#64748b" strokeWidth={2} />
+                              <line x1={traj.startX} y1={traj.nearBankY} x2={traj.startX} y2={traj.farBankY} stroke="#475569" strokeWidth={1.5} strokeDasharray="4,4" />
+                              <circle cx={traj.startX} cy={traj.nearBankY} r={4} fill="#e2e8f0" />
+                              {traj.river.canCross && (
+                                <>
+                                  <SvgArrow x1={traj.startX} y1={traj.nearBankY} x2={traj.landingX} y2={traj.farBankY} color="#34d399" width={2} dashed />
+                                  <circle cx={traj.landingX} cy={traj.farBankY} r={4} fill="#34d399" />
+                                </>
+                              )}
+                            </svg>
+                            <div className="text-[10px] text-gray-400 text-center mt-1">
+                              top-down view — dashed line = straight-across aim
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })()}
+
                     <div className="bg-slate-900/60 rounded-lg p-3 text-xs font-mono space-y-1">
                       <div>Ground velocity: ({river.groundVec.x.toFixed(2)}, {river.groundVec.y.toFixed(2)}) m/s</div>
                       <div>Ground speed: {river.groundSpeed.toFixed(2)} m/s at {toDisplayAngle(river.groundAngle).toFixed(1)}°</div>
@@ -1194,6 +1336,36 @@ const VectorAdditionPlayground = () => {
                     <div>F1 = {eqForces.f1.V} units at {toDisplayAngle(eqForces.f1.theta).toFixed(1)}°</div>
                     <div>F2 = {eqForces.f2.V} units at {toDisplayAngle(eqForces.f2.theta).toFixed(1)}°</div>
                   </div>
+
+                  {/* Added: force-triangle diagram. F1 then F2 tail-to-tip from the
+                      origin; your guess (grey/green/red) and, once revealed, the
+                      true solution (dashed emerald) both drawn as the closing leg —
+                      a correct answer visibly closes the triangle back on the origin. */}
+                  {(() => {
+                    const diag = getEquilibriumDiagram();
+                    const guessColor = !eqFeedback ? '#94a3b8' : (eqFeedback.correct ? '#34d399' : '#f87171');
+                    return (
+                      <div className="bg-slate-900/40 rounded-lg p-2">
+                        <svg viewBox={`0 0 ${diag.w} ${diag.h}`} className="w-full h-auto max-w-[220px] mx-auto block">
+                          <SvgArrow x1={diag.O.x} y1={diag.O.y} x2={diag.tip1.x} y2={diag.tip1.y} color="#38bdf8" />
+                          <SvgArrow x1={diag.tip1.x} y1={diag.tip1.y} x2={diag.tip2.x} y2={diag.tip2.y} color="#fbbf24" />
+                          {diag.guessTipScreen && (
+                            <SvgArrow x1={diag.tip2.x} y1={diag.tip2.y} x2={diag.guessTipScreen.x} y2={diag.guessTipScreen.y} color={guessColor} width={2} />
+                          )}
+                          {eqSolved && (
+                            <SvgArrow x1={diag.tip2.x} y1={diag.tip2.y} x2={diag.solTipScreen.x} y2={diag.solTipScreen.y} color="#34d399" width={2} dashed />
+                          )}
+                          <circle cx={diag.O.x} cy={diag.O.y} r={4} fill="#e2e8f0" />
+                        </svg>
+                        <div className="text-[10px] text-gray-400 text-center mt-1 space-x-2">
+                          <span className="text-sky-400">■ F1</span>
+                          <span className="text-amber-400">■ F2</span>
+                          <span style={{ color: guessColor }}>■ your F3</span>
+                          {eqSolved && <span className="text-emerald-400">■ true F3</span>}
+                        </div>
+                      </div>
+                    );
+                  })()}
 
                   <div className="grid grid-cols-2 gap-2">
                     <label className="text-xs text-gray-400">
