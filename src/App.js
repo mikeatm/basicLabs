@@ -1,5 +1,8 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Plus, Trash2, RotateCcw, Target, BookOpen, Award, Eye, EyeOff } from 'lucide-react';
+import {
+  Plus, Trash2, RotateCcw, Target, BookOpen, Award, Eye, EyeOff,
+  Calculator, Brain, CheckCircle2, XCircle, ArrowRight
+} from 'lucide-react';
 
 const VectorAdditionPlayground = () => {
   const canvasRef = useRef(null);
@@ -17,6 +20,17 @@ const VectorAdditionPlayground = () => {
   const [challenge, setChallenge] = useState(null);
   const [challengeMode, setChallengeMode] = useState(false);
   const [score, setScore] = useState(0);
+
+  // --- Added: polar (magnitude/angle) editing + "show working" ---
+  const [showWorking, setShowWorking] = useState(false);
+
+  // --- Added: Component Resolution Practice mode ---
+  const [practiceMode, setPracticeMode] = useState(false);
+  const [practiceQuestion, setPracticeQuestion] = useState(null); // { V, theta }
+  const [practiceInputs, setPracticeInputs] = useState({ vx: '', vy: '' });
+  const [practiceFeedback, setPracticeFeedback] = useState(null); // { correct, message }
+  const [practiceScore, setPracticeScore] = useState(0);
+  const [practiceAttempts, setPracticeAttempts] = useState(0);
 
   const CANVAS_WIDTH = 800;
   const CANVAS_HEIGHT = 600;
@@ -55,6 +69,94 @@ const VectorAdditionPlayground = () => {
     const totalX = vectors.reduce((sum, v) => sum + v.x, 0);
     const totalY = vectors.reduce((sum, v) => sum + v.y, 0);
     return { x: totalX, y: totalY };
+  };
+
+  // --- Added: Cartesian <-> polar helpers ---
+  // theta is returned in degrees, standard math convention (CCW from +x axis), range [0, 360).
+  const getPolar = (v) => {
+    const V = Math.sqrt(v.x * v.x + v.y * v.y);
+    let theta = Math.atan2(v.y, v.x) * 180 / Math.PI;
+    if (theta < 0) theta += 360;
+    return { V, theta };
+  };
+
+  const setVectorMagnitude = (id, newV) => {
+    if (Number.isNaN(newV)) return;
+    setVectors(vectors.map(v => {
+      if (v.id !== id) return v;
+      const { theta } = getPolar(v);
+      const rad = theta * Math.PI / 180;
+      return { ...v, x: newV * Math.cos(rad), y: newV * Math.sin(rad) };
+    }));
+  };
+
+  const setVectorAngle = (id, newTheta) => {
+    if (Number.isNaN(newTheta)) return;
+    setVectors(vectors.map(v => {
+      if (v.id !== id) return v;
+      const { V } = getPolar(v);
+      const rad = newTheta * Math.PI / 180;
+      return { ...v, x: V * Math.cos(rad), y: V * Math.sin(rad) };
+    }));
+  };
+
+  // --- Added: Component Resolution Practice mode ---
+  // Deliberately biases toward non-first-quadrant angles, since Vx/Vy sign errors
+  // outside 0-90 degrees are the most common mistake this mode targets.
+  const generatePracticeQuestion = () => {
+    const V = Math.floor(Math.random() * 16) + 5; // 5 - 20
+    let theta;
+    do {
+      theta = Math.floor(Math.random() * 72) * 5; // multiples of 5, 0-355
+    } while (theta % 90 === 0); // skip trivial axis-aligned angles
+    setPracticeQuestion({ V, theta });
+    setPracticeInputs({ vx: '', vy: '' });
+    setPracticeFeedback(null);
+    setPracticeMode(true);
+  };
+
+  const checkPracticeAnswer = () => {
+    if (!practiceQuestion) return;
+    const { V, theta } = practiceQuestion;
+    const rad = theta * Math.PI / 180;
+    const correctVx = V * Math.cos(rad);
+    const correctVy = V * Math.sin(rad);
+
+    const userVx = parseFloat(practiceInputs.vx);
+    const userVy = parseFloat(practiceInputs.vy);
+
+    if (Number.isNaN(userVx) || Number.isNaN(userVy)) {
+      setPracticeFeedback({ correct: false, message: 'Enter a number for both Vx and Vy.' });
+      return;
+    }
+
+    const tol = 0.3;
+    const vxOk = Math.abs(userVx - correctVx) < tol;
+    const vyOk = Math.abs(userVy - correctVy) < tol;
+    setPracticeAttempts(practiceAttempts + 1);
+
+    if (vxOk && vyOk) {
+      setPracticeScore(practiceScore + 1);
+      setPracticeFeedback({
+        correct: true,
+        message: `Correct — Vx = ${correctVx.toFixed(1)}, Vy = ${correctVy.toFixed(1)}.`
+      });
+      return;
+    }
+
+    // Diagnose the specific mistake rather than just saying "wrong".
+    const vxSignFlip = !vxOk && Math.abs(Math.abs(userVx) - Math.abs(correctVx)) < tol;
+    const vySignFlip = !vyOk && Math.abs(Math.abs(userVy) - Math.abs(correctVy)) < tol;
+
+    if (vxSignFlip && vyOk) {
+      setPracticeFeedback({ correct: false, message: `Magnitude of Vx is right, but the sign is wrong — which side of the y-axis does ${theta}° put you on?` });
+    } else if (vySignFlip && vxOk) {
+      setPracticeFeedback({ correct: false, message: `Magnitude of Vy is right, but the sign is wrong — is ${theta}° above or below the x-axis?` });
+    } else if (vxSignFlip && vySignFlip) {
+      setPracticeFeedback({ correct: false, message: `Both magnitudes are right, but check your signs — which quadrant is ${theta}° actually in?` });
+    } else {
+      setPracticeFeedback({ correct: false, message: `Not quite. Recompute Vx = V cos(θ) and Vy = V sin(θ) with V = ${V} and θ = ${theta}°.` });
+    }
   };
 
   const addVector = () => {
@@ -474,6 +576,19 @@ const VectorAdditionPlayground = () => {
                       {showGrid ? <Eye size={18} /> : <EyeOff size={18} />}
                     </button>
                   </div>
+
+                  {/* Added: Show Working toggle */}
+                  <div className="flex items-center justify-between pt-2 border-t border-slate-600 mt-2">
+                    <span className="text-sm flex items-center gap-1">
+                      <Calculator size={14} /> Show Working
+                    </span>
+                    <button
+                      onClick={() => setShowWorking(!showWorking)}
+                      className={`p-2 rounded ${showWorking ? 'bg-cyan-600' : 'bg-slate-600'}`}
+                    >
+                      {showWorking ? <Eye size={18} /> : <EyeOff size={18} />}
+                    </button>
+                  </div>
                 </div>
               </div>
             </div>
@@ -481,32 +596,72 @@ const VectorAdditionPlayground = () => {
             {/* Vector List */}
             <div className="bg-slate-800/60 backdrop-blur-sm rounded-2xl p-5 border border-slate-700/50">
               <h2 className="text-xl font-bold mb-4 text-cyan-400">Current Vectors</h2>
-              <div className="space-y-2 max-h-60 overflow-y-auto">
-                {vectors.map((vector) => (
-                  <div
-                    key={vector.id}
-                    className="bg-slate-700/50 p-3 rounded-lg flex items-center justify-between"
-                  >
-                    <div className="flex items-center gap-3">
-                      <div
-                        className="w-4 h-4 rounded-full"
-                        style={{ backgroundColor: vector.color }}
-                      />
-                      <div>
-                        <div className="font-bold">{vector.label}</div>
-                        <div className="text-xs text-gray-400">
-                          ({vector.x.toFixed(1)}, {vector.y.toFixed(1)})
-                        </div>
-                      </div>
-                    </div>
-                    <button
-                      onClick={() => deleteVector(vector.id)}
-                      className="text-red-400 hover:text-red-300 p-2"
+              <div className="space-y-2 max-h-80 overflow-y-auto">
+                {vectors.map((vector) => {
+                  // Added: derive magnitude/angle from the canonical (x, y) so the
+                  // polar fields below always stay in sync with drag edits.
+                  const { V, theta } = getPolar(vector);
+                  const rad = theta * Math.PI / 180;
+                  return (
+                    <div
+                      key={vector.id}
+                      className="bg-slate-700/50 p-3 rounded-lg"
                     >
-                      <Trash2 size={16} />
-                    </button>
-                  </div>
-                ))}
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                          <div
+                            className="w-4 h-4 rounded-full"
+                            style={{ backgroundColor: vector.color }}
+                          />
+                          <div>
+                            <div className="font-bold">{vector.label}</div>
+                            <div className="text-xs text-gray-400">
+                              ({vector.x.toFixed(1)}, {vector.y.toFixed(1)})
+                            </div>
+                          </div>
+                        </div>
+                        <button
+                          onClick={() => deleteVector(vector.id)}
+                          className="text-red-400 hover:text-red-300 p-2"
+                        >
+                          <Trash2 size={16} />
+                        </button>
+                      </div>
+
+                      {/* Added: editable magnitude/angle (polar) inputs */}
+                      <div className="grid grid-cols-2 gap-2 mt-2">
+                        <label className="text-xs text-gray-400">
+                          Magnitude
+                          <input
+                            type="number"
+                            step="0.5"
+                            value={V.toFixed(1)}
+                            onChange={(e) => setVectorMagnitude(vector.id, parseFloat(e.target.value))}
+                            className="w-full mt-1 bg-slate-900/60 border border-slate-600 rounded px-2 py-1 text-white text-sm"
+                          />
+                        </label>
+                        <label className="text-xs text-gray-400">
+                          Angle (° from +x)
+                          <input
+                            type="number"
+                            step="1"
+                            value={theta.toFixed(1)}
+                            onChange={(e) => setVectorAngle(vector.id, parseFloat(e.target.value))}
+                            className="w-full mt-1 bg-slate-900/60 border border-slate-600 rounded px-2 py-1 text-white text-sm"
+                          />
+                        </label>
+                      </div>
+
+                      {/* Added: "show working" breakdown of the component resolution */}
+                      {showWorking && (
+                        <div className="mt-2 pt-2 border-t border-slate-600/60 text-xs font-mono text-gray-300 space-y-0.5">
+                          <div>Vx = V·cos(θ) = {V.toFixed(1)}·cos({theta.toFixed(1)}°) = {(V * Math.cos(rad)).toFixed(1)}</div>
+                          <div>Vy = V·sin(θ) = {V.toFixed(1)}·sin({theta.toFixed(1)}°) = {(V * Math.sin(rad)).toFixed(1)}</div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             </div>
 
@@ -532,6 +687,13 @@ const VectorAdditionPlayground = () => {
                     {resultantAngle.toFixed(1)}°
                   </span>
                 </div>
+                {/* Added: show working for the resultant magnitude/angle */}
+                {showWorking && (
+                  <div className="mt-2 pt-2 border-t border-slate-600/60 text-xs font-mono text-gray-400 space-y-0.5">
+                    <div>|R| = √(Rx² + Ry²) = √({resultant.x.toFixed(1)}² + {resultant.y.toFixed(1)}²) = {resultantMag.toFixed(1)}</div>
+                    <div>θ = atan2(Ry, Rx) = atan2({resultant.y.toFixed(1)}, {resultant.x.toFixed(1)}) = {resultantAngle.toFixed(1)}°</div>
+                  </div>
+                )}
               </div>
             </div>
 
@@ -577,6 +739,105 @@ const VectorAdditionPlayground = () => {
                 </div>
               )}
             </div>
+
+            {/* Added: Component Resolution Practice */}
+            <div className="bg-slate-800/60 backdrop-blur-sm rounded-2xl p-5 border border-slate-700/50">
+              <h2 className="text-xl font-bold mb-4 text-purple-400 flex items-center gap-2">
+                <Brain size={20} /> Component Practice
+              </h2>
+              {!practiceMode ? (
+                <>
+                  <p className="text-xs text-gray-400 mb-3">
+                    Given V and θ, predict Vx and Vy before the app draws anything —
+                    no dragging allowed here.
+                  </p>
+                  <button
+                    onClick={generatePracticeQuestion}
+                    className="w-full bg-purple-600 hover:bg-purple-500 py-3 rounded-lg font-semibold transition-all"
+                  >
+                    Start Practice
+                  </button>
+                </>
+              ) : (
+                <div className="space-y-3">
+                  <div className="flex justify-between items-center text-sm">
+                    <span className="text-gray-400">Score:</span>
+                    <span className="text-xl font-bold text-purple-400">
+                      {practiceScore} / {practiceAttempts}
+                    </span>
+                  </div>
+
+                  {practiceQuestion && (
+                    <div className="bg-slate-900/60 rounded-lg p-3 text-center">
+                      <div className="text-sm text-gray-400">Resolve this vector:</div>
+                      <div className="text-lg font-mono text-white mt-1">
+                        V = {practiceQuestion.V} units, θ = {practiceQuestion.theta}°
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="grid grid-cols-2 gap-2">
+                    <label className="text-xs text-gray-400">
+                      Vx =
+                      <input
+                        type="number"
+                        step="0.1"
+                        value={practiceInputs.vx}
+                        onChange={(e) => setPracticeInputs({ ...practiceInputs, vx: e.target.value })}
+                        className="w-full mt-1 bg-slate-900/60 border border-slate-600 rounded px-2 py-1 text-white text-sm"
+                        placeholder="?"
+                      />
+                    </label>
+                    <label className="text-xs text-gray-400">
+                      Vy =
+                      <input
+                        type="number"
+                        step="0.1"
+                        value={practiceInputs.vy}
+                        onChange={(e) => setPracticeInputs({ ...practiceInputs, vy: e.target.value })}
+                        className="w-full mt-1 bg-slate-900/60 border border-slate-600 rounded px-2 py-1 text-white text-sm"
+                        placeholder="?"
+                      />
+                    </label>
+                  </div>
+
+                  {practiceFeedback && (
+                    <div className={`flex items-start gap-2 text-sm p-2 rounded-lg ${
+                      practiceFeedback.correct ? 'bg-emerald-900/40 text-emerald-300' : 'bg-red-900/40 text-red-300'
+                    }`}>
+                      {practiceFeedback.correct ? <CheckCircle2 size={16} className="mt-0.5 shrink-0" /> : <XCircle size={16} className="mt-0.5 shrink-0" />}
+                      <span>{practiceFeedback.message}</span>
+                    </div>
+                  )}
+
+                  <div className="flex gap-2">
+                    <button
+                      onClick={checkPracticeAnswer}
+                      className="flex-1 bg-emerald-600 hover:bg-emerald-500 py-2 rounded-lg text-sm font-semibold transition-all"
+                    >
+                      Check
+                    </button>
+                    <button
+                      onClick={generatePracticeQuestion}
+                      className="flex-1 bg-slate-700 hover:bg-slate-600 py-2 rounded-lg text-sm font-semibold transition-all flex items-center justify-center gap-1"
+                    >
+                      Next <ArrowRight size={14} />
+                    </button>
+                  </div>
+
+                  <button
+                    onClick={() => {
+                      setPracticeMode(false);
+                      setPracticeQuestion(null);
+                      setPracticeFeedback(null);
+                    }}
+                    className="w-full bg-slate-700 hover:bg-slate-600 py-2 rounded-lg text-sm transition-all"
+                  >
+                    Exit Practice
+                  </button>
+                </div>
+              )}
+            </div>
           </div>
         </div>
 
@@ -608,6 +869,20 @@ const VectorAdditionPlayground = () => {
               <h3 className="font-semibold text-emerald-400 mb-2">🎯 Challenge Mode</h3>
               <p className="text-gray-300">
                 Test your skills by creating vectors that reach the target point!
+              </p>
+            </div>
+            <div>
+              <h3 className="font-semibold text-emerald-400 mb-2">🧮 Magnitude/Angle + Show Working</h3>
+              <p className="text-gray-300">
+                Edit a vector's magnitude and angle directly, and toggle "Show Working" to see the
+                Vx = V·cos(θ), Vy = V·sin(θ) substitution for every vector and the resultant.
+              </p>
+            </div>
+            <div>
+              <h3 className="font-semibold text-emerald-400 mb-2">🧠 Component Practice</h3>
+              <p className="text-gray-300">
+                Given V and θ, predict Vx and Vy yourself before checking — feedback calls out
+                sign errors by quadrant instead of just marking you wrong.
               </p>
             </div>
           </div>
