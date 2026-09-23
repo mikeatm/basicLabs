@@ -1,13 +1,13 @@
 {
   "files": {
     "main.css": "/basicLabs/static/css/main.5e41044a.css",
-    "main.js": "/basicLabs/static/js/main.26d03791.js",
+    "main.js": "/basicLabs/static/js/main.2db1e8ac.js",
     "index.html": "/basicLabs/index.html",
     "main.5e41044a.css.map": "/basicLabs/static/css/main.5e41044a.css.map",
-    "main.26d03791.js.map": "/basicLabs/static/js/main.26d03791.js.map"
+    "main.2db1e8ac.js.map": "/basicLabs/static/js/main.2db1e8ac.js.map"
   },
   "entrypoints": [
     "static/css/main.5e41044a.css",
-    "static/js/main.26d03791.js"
+    "static/js/main.2db1e8ac.js"
   ]
 }
