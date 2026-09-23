@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import {
   Plus, Trash2, RotateCcw, Target, BookOpen, Award, Eye, EyeOff,
-  Calculator, Brain, CheckCircle2, XCircle, ArrowRight
+  Calculator, Brain, CheckCircle2, XCircle, ArrowRight, Waves, Scale, Compass
 } from 'lucide-react';
 
 const VectorAdditionPlayground = () => {
@@ -32,6 +32,27 @@ const VectorAdditionPlayground = () => {
   const [practiceScore, setPracticeScore] = useState(0);
   const [practiceAttempts, setPracticeAttempts] = useState(0);
 
+  // --- Added: angle convention toggle ('math' = CCW from +x; 'bearing' = CW from N) ---
+  const [angleConvention, setAngleConvention] = useState('math');
+
+  // --- Added: specify-a-new-vector form (Add Vector used to be random-only) ---
+  const [newVecMag, setNewVecMag] = useState('10');
+  const [newVecAngle, setNewVecAngle] = useState('0');
+
+  // --- Added: Relative Velocity (river-crossing) lab ---
+  const [riverMode, setRiverMode] = useState(false);
+  const [riverWidth, setRiverWidth] = useState(200);   // metres
+  const [currentSpeed, setCurrentSpeed] = useState(3); // m/s, fixed along +x (downstream)
+  const [boatSpeed, setBoatSpeed] = useState(4);       // m/s relative to water
+  const [boatHeading, setBoatHeading] = useState(90);  // standard degrees; 90 = straight across
+
+  // --- Added: Equilibrium (three-force) lab ---
+  const [equilibriumMode, setEquilibriumMode] = useState(false);
+  const [eqForces, setEqForces] = useState({ f1: { V: 14, theta: 50 }, f2: { V: 9, theta: 200 } });
+  const [eqGuess, setEqGuess] = useState({ V: '', theta: '' });
+  const [eqFeedback, setEqFeedback] = useState(null);
+  const [eqSolved, setEqSolved] = useState(false);
+
   const CANVAS_WIDTH = 800;
   const CANVAS_HEIGHT = 600;
   const ORIGIN_X = CANVAS_WIDTH / 2;
@@ -42,7 +63,10 @@ const VectorAdditionPlayground = () => {
   const generateChallenge = () => {
     const targetX = Math.floor(Math.random() * 10 - 5) * 20;
     const targetY = Math.floor(Math.random() * 10 - 5) * 20;
-    setChallenge({ x: targetX, y: targetY });
+    // Added: require combining at least 2-4 vectors, otherwise a single vector
+    // dragged straight to the target trivially "solves" it without any addition.
+    const minVectors = Math.floor(Math.random() * 3) + 2;
+    setChallenge({ x: targetX, y: targetY, minVectors });
     setVectors([]);
     setNextId(1);
     setChallengeMode(true);
@@ -51,6 +75,10 @@ const VectorAdditionPlayground = () => {
   // Check challenge completion
   const checkChallenge = () => {
     if (!challenge) return;
+    if (vectors.length < challenge.minVectors) {
+      alert(`Add at least ${challenge.minVectors} vectors before checking — you currently have ${vectors.length}. This challenge is about combining vectors, not aiming one.`);
+      return;
+    }
     const resultant = calculateResultant();
     const distance = Math.sqrt(
       Math.pow(resultant.x - challenge.x, 2) + 
@@ -71,6 +99,22 @@ const VectorAdditionPlayground = () => {
     return { x: totalX, y: totalY };
   };
 
+  // --- Added (bug fix): screen-space tail position of the vector at `index`.
+  // In parallelogram mode every vector's tail is the origin. In tail-to-tip mode
+  // each vector's tail is the tip of the chain of vectors before it — the drag
+  // handlers previously ignored this and always measured from the origin, which
+  // is why only the first vector could be dragged correctly in tail-to-tip mode.
+  const getScreenTail = (index) => {
+    if (mode !== 'tail-to-tip') return { x: ORIGIN_X, y: ORIGIN_Y };
+    let cx = ORIGIN_X;
+    let cy = ORIGIN_Y;
+    for (let i = 0; i < index; i++) {
+      cx += vectors[i].x * scale;
+      cy -= vectors[i].y * scale;
+    }
+    return { x: cx, y: cy };
+  };
+
   // --- Added: Cartesian <-> polar helpers ---
   // theta is returned in degrees, standard math convention (CCW from +x axis), range [0, 360).
   const getPolar = (v) => {
@@ -79,6 +123,20 @@ const VectorAdditionPlayground = () => {
     if (theta < 0) theta += 360;
     return { V, theta };
   };
+
+  // --- Added: angle-convention conversion ---
+  // 'math': degrees CCW from +x (East). 'bearing': compass bearing, degrees CW from +y (North).
+  // Because North sits at 90 degrees in the math convention, the conversion is
+  // self-inverse: applying it twice returns the original angle either way.
+  const toDisplayAngle = (stdDeg) => {
+    const norm = ((stdDeg % 360) + 360) % 360;
+    return angleConvention === 'bearing' ? (90 - norm + 360) % 360 : norm;
+  };
+  const fromDisplayAngle = (dispDeg) => {
+    const norm = ((dispDeg % 360) + 360) % 360;
+    return angleConvention === 'bearing' ? (90 - norm + 360) % 360 : norm;
+  };
+  const angleUnitLabel = angleConvention === 'bearing' ? '° bearing, CW from N' : '° from +x, CCW';
 
   const setVectorMagnitude = (id, newV) => {
     if (Number.isNaN(newV)) return;
@@ -90,8 +148,9 @@ const VectorAdditionPlayground = () => {
     }));
   };
 
-  const setVectorAngle = (id, newTheta) => {
-    if (Number.isNaN(newTheta)) return;
+  const setVectorAngle = (id, newDisplayAngle) => {
+    if (Number.isNaN(newDisplayAngle)) return;
+    const newTheta = fromDisplayAngle(newDisplayAngle);
     setVectors(vectors.map(v => {
       if (v.id !== id) return v;
       const { V } = getPolar(v);
@@ -121,6 +180,7 @@ const VectorAdditionPlayground = () => {
     const rad = theta * Math.PI / 180;
     const correctVx = V * Math.cos(rad);
     const correctVy = V * Math.sin(rad);
+    const dispTheta = toDisplayAngle(theta).toFixed(1);
 
     const userVx = parseFloat(practiceInputs.vx);
     const userVy = parseFloat(practiceInputs.vy);
@@ -149,21 +209,106 @@ const VectorAdditionPlayground = () => {
     const vySignFlip = !vyOk && Math.abs(Math.abs(userVy) - Math.abs(correctVy)) < tol;
 
     if (vxSignFlip && vyOk) {
-      setPracticeFeedback({ correct: false, message: `Magnitude of Vx is right, but the sign is wrong — which side of the y-axis does ${theta}° put you on?` });
+      setPracticeFeedback({ correct: false, message: `Magnitude of Vx is right, but the sign is wrong — which side of the y-axis does ${dispTheta}° put you on?` });
     } else if (vySignFlip && vxOk) {
-      setPracticeFeedback({ correct: false, message: `Magnitude of Vy is right, but the sign is wrong — is ${theta}° above or below the x-axis?` });
+      setPracticeFeedback({ correct: false, message: `Magnitude of Vy is right, but the sign is wrong — is ${dispTheta}° above or below the x-axis?` });
     } else if (vxSignFlip && vySignFlip) {
-      setPracticeFeedback({ correct: false, message: `Both magnitudes are right, but check your signs — which quadrant is ${theta}° actually in?` });
+      setPracticeFeedback({ correct: false, message: `Both magnitudes are right, but check your signs — which quadrant is ${dispTheta}° actually in?` });
     } else {
-      setPracticeFeedback({ correct: false, message: `Not quite. Recompute Vx = V cos(θ) and Vy = V sin(θ) with V = ${V} and θ = ${theta}°.` });
+      setPracticeFeedback({ correct: false, message: `Not quite. Recompute Vx and Vy for V = ${V}, θ = ${dispTheta}°.` });
     }
   };
 
-  const addVector = () => {
+  // --- Added: Relative Velocity (river-crossing) lab ---
+  // River current is fixed along +x ("downstream"). Boat heading uses the same
+  // standard (V, theta) convention as every other vector in the app: 90 deg is
+  // straight across, 180 deg is directly upstream.
+  const getRiverSolution = () => {
+    const boatRad = boatHeading * Math.PI / 180;
+    const boatVec = { x: boatSpeed * Math.cos(boatRad), y: boatSpeed * Math.sin(boatRad) };
+    const groundVec = { x: currentSpeed + boatVec.x, y: boatVec.y };
+    const groundSpeed = Math.sqrt(groundVec.x ** 2 + groundVec.y ** 2);
+    let groundAngle = Math.atan2(groundVec.y, groundVec.x) * 180 / Math.PI;
+    if (groundAngle < 0) groundAngle += 360;
+    const canCross = groundVec.y > 1e-3;
+    const crossTime = canCross ? riverWidth / groundVec.y : null;
+    const drift = canCross ? groundVec.x * crossTime : null;
+    return { boatVec, groundVec, groundSpeed, groundAngle, canCross, crossTime, drift };
+  };
+
+  // Solves boatSpeed*cos(theta) = -currentSpeed for the heading that cancels all drift.
+  const solveZeroDrift = () => {
+    if (currentSpeed >= boatSpeed) {
+      alert('Current speed is not less than boat speed — zero drift is impossible: the boat cannot out-swim the current, no heading fixes this.');
+      return;
+    }
+    const thetaRad = Math.acos(-currentSpeed / boatSpeed); // in (90 deg, 180 deg): upstream of straight-across
+    setBoatHeading(Number((thetaRad * 180 / Math.PI).toFixed(1)));
+  };
+
+  // --- Added: Equilibrium (three-force) lab ---
+  const generateEquilibriumProblem = () => {
+    const V1 = Math.floor(Math.random() * 16) + 5;
+    const V2 = Math.floor(Math.random() * 16) + 5;
+    const th1 = Math.floor(Math.random() * 72) * 5;
+    let th2;
+    do {
+      th2 = Math.floor(Math.random() * 72) * 5;
+    } while (Math.abs(((th2 - th1) % 360 + 540) % 360 - 180) > 160); // keep F1, F2 non-degenerate
+    setEqForces({ f1: { V: V1, theta: th1 }, f2: { V: V2, theta: th2 } });
+    setEqGuess({ V: '', theta: '' });
+    setEqFeedback(null);
+    setEqSolved(false);
+    setEquilibriumMode(true);
+  };
+
+  const getEquilibriumSolution = () => {
+    const rad1 = eqForces.f1.theta * Math.PI / 180;
+    const rad2 = eqForces.f2.theta * Math.PI / 180;
+    const sumX = eqForces.f1.V * Math.cos(rad1) + eqForces.f2.V * Math.cos(rad2);
+    const sumY = eqForces.f1.V * Math.sin(rad1) + eqForces.f2.V * Math.sin(rad2);
+    const f3x = -sumX;
+    const f3y = -sumY;
+    const f3V = Math.sqrt(f3x ** 2 + f3y ** 2);
+    let f3theta = Math.atan2(f3y, f3x) * 180 / Math.PI;
+    if (f3theta < 0) f3theta += 360;
+    return { sumX, sumY, f3x, f3y, f3V, f3theta };
+  };
+
+  const checkEquilibriumGuess = () => {
+    const guessV = parseFloat(eqGuess.V);
+    const guessThetaDisp = parseFloat(eqGuess.theta);
+    if (Number.isNaN(guessV) || Number.isNaN(guessThetaDisp)) {
+      setEqFeedback({ correct: false, message: 'Enter both a magnitude and an angle for F3.' });
+      return;
+    }
+    const guessThetaStd = fromDisplayAngle(guessThetaDisp);
+    const rad1 = eqForces.f1.theta * Math.PI / 180;
+    const rad2 = eqForces.f2.theta * Math.PI / 180;
+    const gRad = guessThetaStd * Math.PI / 180;
+    const netX = eqForces.f1.V * Math.cos(rad1) + eqForces.f2.V * Math.cos(rad2) + guessV * Math.cos(gRad);
+    const netY = eqForces.f1.V * Math.sin(rad1) + eqForces.f2.V * Math.sin(rad2) + guessV * Math.sin(gRad);
+    const residual = Math.sqrt(netX ** 2 + netY ** 2);
+    if (residual < 0.3) {
+      setEqFeedback({ correct: true, message: `Balanced — residual |ΣF| = ${residual.toFixed(2)} units (rounding only).` });
+    } else {
+      setEqFeedback({ correct: false, message: `Not balanced — residual |ΣF| = ${residual.toFixed(2)} units. F3 must equal −(F1 + F2) component-wise.` });
+    }
+  };
+
+  const addVector = (V, thetaStd) => {
+    let x, y;
+    if (typeof V === 'number' && typeof thetaStd === 'number' && !Number.isNaN(V) && !Number.isNaN(thetaStd)) {
+      const rad = thetaStd * Math.PI / 180;
+      x = V * Math.cos(rad);
+      y = V * Math.sin(rad);
+    } else {
+      x = Math.random() * 100 - 50;
+      y = Math.random() * 100 - 50;
+    }
     const newVector = {
       id: nextId,
-      x: Math.random() * 100 - 50,
-      y: Math.random() * 100 - 50,
+      x, y,
       color: `hsl(${Math.random() * 360}, 70%, 60%)`,
       label: String.fromCharCode(64 + nextId)
     };
@@ -382,33 +527,36 @@ const VectorAdditionPlayground = () => {
     const mouseY = (e.clientY - rect.top) * scaleY;
 
     // Check if clicking near any vector endpoint
-    for (const vector of vectors) {
-      const endX = ORIGIN_X + vector.x * scale;
-      const endY = ORIGIN_Y - vector.y * scale;
+    vectors.forEach((vector, index) => {
+      if (dragging) return; // already found one this pass
+      const tail = getScreenTail(index);
+      const endX = tail.x + vector.x * scale;
+      const endY = tail.y - vector.y * scale;
       const distance = Math.sqrt(Math.pow(mouseX - endX, 2) + Math.pow(mouseY - endY, 2));
-      
+
       if (distance < 25) {
         setDragging(vector.id);
         e.preventDefault();
-        break;
       }
-    }
+    });
   };
 
   const handleMouseMove = (e) => {
     if (!dragging) return;
-    
+
     const canvas = canvasRef.current;
     const rect = canvas.getBoundingClientRect();
     const scaleX = canvas.width / rect.width;
     const scaleY = canvas.height / rect.height;
     const mouseX = (e.clientX - rect.left) * scaleX;
     const mouseY = (e.clientY - rect.top) * scaleY;
-    
-    const newX = (mouseX - ORIGIN_X) / scale;
-    const newY = -(mouseY - ORIGIN_Y) / scale;
-    
-    setVectors(vectors.map(v => 
+
+    const index = vectors.findIndex(v => v.id === dragging);
+    const tail = getScreenTail(index);
+    const newX = (mouseX - tail.x) / scale;
+    const newY = -(mouseY - tail.y) / scale;
+
+    setVectors(vectors.map(v =>
       v.id === dragging ? { ...v, x: newX, y: newY } : v
     ));
   };
@@ -426,23 +574,24 @@ const VectorAdditionPlayground = () => {
     const mouseX = (touch.clientX - rect.left) * scaleX;
     const mouseY = (touch.clientY - rect.top) * scaleY;
 
-    for (const vector of vectors) {
-      const endX = ORIGIN_X + vector.x * scale;
-      const endY = ORIGIN_Y - vector.y * scale;
+    vectors.forEach((vector, index) => {
+      if (dragging) return;
+      const tail = getScreenTail(index);
+      const endX = tail.x + vector.x * scale;
+      const endY = tail.y - vector.y * scale;
       const distance = Math.sqrt(Math.pow(mouseX - endX, 2) + Math.pow(mouseY - endY, 2));
-      
+
       if (distance < 25) {
         setDragging(vector.id);
         e.preventDefault();
-        break;
       }
-    }
+    });
   };
 
   const handleTouchMove = (e) => {
     if (!dragging) return;
     e.preventDefault();
-    
+
     const canvas = canvasRef.current;
     const rect = canvas.getBoundingClientRect();
     const scaleX = canvas.width / rect.width;
@@ -450,11 +599,13 @@ const VectorAdditionPlayground = () => {
     const touch = e.touches[0];
     const mouseX = (touch.clientX - rect.left) * scaleX;
     const mouseY = (touch.clientY - rect.top) * scaleY;
-    
-    const newX = (mouseX - ORIGIN_X) / scale;
-    const newY = -(mouseY - ORIGIN_Y) / scale;
-    
-    setVectors(vectors.map(v => 
+
+    const index = vectors.findIndex(v => v.id === dragging);
+    const tail = getScreenTail(index);
+    const newX = (mouseX - tail.x) / scale;
+    const newY = -(mouseY - tail.y) / scale;
+
+    setVectors(vectors.map(v =>
       v.id === dragging ? { ...v, x: newX, y: newY } : v
     ));
   };
@@ -532,11 +683,42 @@ const VectorAdditionPlayground = () => {
               </h2>
               
               <div className="space-y-3">
+                {/* Added: specify a vector's magnitude/angle before creating it,
+                    instead of adding a random one and fixing it up afterward. */}
+                <div className="grid grid-cols-2 gap-2">
+                  <label className="text-xs text-gray-400">
+                    Magnitude
+                    <input
+                      type="number" step="0.5" value={newVecMag}
+                      onChange={(e) => setNewVecMag(e.target.value)}
+                      className="w-full mt-1 bg-slate-900/60 border border-slate-600 rounded px-2 py-1 text-white text-sm"
+                    />
+                  </label>
+                  <label className="text-xs text-gray-400">
+                    Angle ({angleUnitLabel})
+                    <input
+                      type="number" step="1" value={newVecAngle}
+                      onChange={(e) => setNewVecAngle(e.target.value)}
+                      className="w-full mt-1 bg-slate-900/60 border border-slate-600 rounded px-2 py-1 text-white text-sm"
+                    />
+                  </label>
+                </div>
                 <button
-                  onClick={addVector}
+                  onClick={() => {
+                    const V = parseFloat(newVecMag);
+                    const thetaStd = fromDisplayAngle(parseFloat(newVecAngle));
+                    addVector(V, thetaStd);
+                  }}
                   className="w-full bg-emerald-600 hover:bg-emerald-500 py-3 rounded-lg font-semibold transition-all flex items-center justify-center gap-2"
                 >
-                  <Plus size={18} /> Add Vector
+                  <Plus size={18} /> Add This Vector
+                </button>
+
+                <button
+                  onClick={() => addVector()}
+                  className="w-full bg-slate-700 hover:bg-slate-600 py-2 rounded-lg text-sm transition-all flex items-center justify-center gap-2"
+                >
+                  <Plus size={16} /> Add Random Vector
                 </button>
                 
                 <button
@@ -588,6 +770,31 @@ const VectorAdditionPlayground = () => {
                     >
                       {showWorking ? <Eye size={18} /> : <EyeOff size={18} />}
                     </button>
+                  </div>
+
+                  {/* Added: Angle convention toggle */}
+                  <div className="pt-2 border-t border-slate-600 mt-2">
+                    <span className="text-sm flex items-center gap-1 mb-2">
+                      <Compass size={14} /> Angle Convention
+                    </span>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => setAngleConvention('math')}
+                        className={`flex-1 py-1.5 rounded text-xs font-semibold transition-all ${
+                          angleConvention === 'math' ? 'bg-cyan-600' : 'bg-slate-600 hover:bg-slate-500'
+                        }`}
+                      >
+                        Standard (° from +x)
+                      </button>
+                      <button
+                        onClick={() => setAngleConvention('bearing')}
+                        className={`flex-1 py-1.5 rounded text-xs font-semibold transition-all ${
+                          angleConvention === 'bearing' ? 'bg-cyan-600' : 'bg-slate-600 hover:bg-slate-500'
+                        }`}
+                      >
+                        Bearing (° CW from N)
+                      </button>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -641,11 +848,11 @@ const VectorAdditionPlayground = () => {
                           />
                         </label>
                         <label className="text-xs text-gray-400">
-                          Angle (° from +x)
+                          Angle ({angleUnitLabel})
                           <input
                             type="number"
                             step="1"
-                            value={theta.toFixed(1)}
+                            value={toDisplayAngle(theta).toFixed(1)}
                             onChange={(e) => setVectorAngle(vector.id, parseFloat(e.target.value))}
                             className="w-full mt-1 bg-slate-900/60 border border-slate-600 rounded px-2 py-1 text-white text-sm"
                           />
@@ -655,8 +862,17 @@ const VectorAdditionPlayground = () => {
                       {/* Added: "show working" breakdown of the component resolution */}
                       {showWorking && (
                         <div className="mt-2 pt-2 border-t border-slate-600/60 text-xs font-mono text-gray-300 space-y-0.5">
-                          <div>Vx = V·cos(θ) = {V.toFixed(1)}·cos({theta.toFixed(1)}°) = {(V * Math.cos(rad)).toFixed(1)}</div>
-                          <div>Vy = V·sin(θ) = {V.toFixed(1)}·sin({theta.toFixed(1)}°) = {(V * Math.sin(rad)).toFixed(1)}</div>
+                          {angleConvention === 'bearing' ? (
+                            <>
+                              <div>Vx = V·sin(β) = {V.toFixed(1)}·sin({toDisplayAngle(theta).toFixed(1)}°) = {(V * Math.cos(rad)).toFixed(1)}</div>
+                              <div>Vy = V·cos(β) = {V.toFixed(1)}·cos({toDisplayAngle(theta).toFixed(1)}°) = {(V * Math.sin(rad)).toFixed(1)}</div>
+                            </>
+                          ) : (
+                            <>
+                              <div>Vx = V·cos(θ) = {V.toFixed(1)}·cos({theta.toFixed(1)}°) = {(V * Math.cos(rad)).toFixed(1)}</div>
+                              <div>Vy = V·sin(θ) = {V.toFixed(1)}·sin({theta.toFixed(1)}°) = {(V * Math.sin(rad)).toFixed(1)}</div>
+                            </>
+                          )}
                         </div>
                       )}
                     </div>
@@ -684,7 +900,7 @@ const VectorAdditionPlayground = () => {
                 <div className="flex justify-between">
                   <span className="text-gray-400">Angle:</span>
                   <span className="font-mono text-cyan-400">
-                    {resultantAngle.toFixed(1)}°
+                    {toDisplayAngle(resultantAngle).toFixed(1)}°
                   </span>
                 </div>
                 {/* Added: show working for the resultant magnitude/angle */}
@@ -692,6 +908,9 @@ const VectorAdditionPlayground = () => {
                   <div className="mt-2 pt-2 border-t border-slate-600/60 text-xs font-mono text-gray-400 space-y-0.5">
                     <div>|R| = √(Rx² + Ry²) = √({resultant.x.toFixed(1)}² + {resultant.y.toFixed(1)}²) = {resultantMag.toFixed(1)}</div>
                     <div>θ = atan2(Ry, Rx) = atan2({resultant.y.toFixed(1)}, {resultant.x.toFixed(1)}) = {resultantAngle.toFixed(1)}°</div>
+                    {angleConvention === 'bearing' && (
+                      <div>β = 90° − θ = {toDisplayAngle(resultantAngle).toFixed(1)}°</div>
+                    )}
                   </div>
                 )}
               </div>
@@ -713,8 +932,16 @@ const VectorAdditionPlayground = () => {
                 <div className="space-y-3">
                   <div className="text-sm">
                     <p className="text-gray-300 mb-2">
-                      Create vectors that result in the target (🎯) location!
+                      Add vectors (drag their tips, or type Magnitude/Angle in the
+                      list above) so that their <span className="text-yellow-400 font-semibold">sum</span> lands
+                      on the target (🎯) — not any single vector.
                     </p>
+                    {challenge && (
+                      <p className="text-xs text-gray-400 mb-2">
+                        Required: at least <span className="text-white font-semibold">{challenge.minVectors}</span> vectors.
+                        You have <span className={vectors.length >= challenge.minVectors ? 'text-emerald-400' : 'text-yellow-400'}>{vectors.length}</span>.
+                      </p>
+                    )}
                     <div className="flex justify-between items-center">
                       <span className="text-gray-400">Score:</span>
                       <span className="text-2xl font-bold text-yellow-400">{score}</span>
@@ -771,7 +998,7 @@ const VectorAdditionPlayground = () => {
                     <div className="bg-slate-900/60 rounded-lg p-3 text-center">
                       <div className="text-sm text-gray-400">Resolve this vector:</div>
                       <div className="text-lg font-mono text-white mt-1">
-                        V = {practiceQuestion.V} units, θ = {practiceQuestion.theta}°
+                        V = {practiceQuestion.V} units, θ = {toDisplayAngle(practiceQuestion.theta).toFixed(1)}°
                       </div>
                     </div>
                   )}
@@ -838,6 +1065,204 @@ const VectorAdditionPlayground = () => {
                 </div>
               )}
             </div>
+
+            {/* Added: Relative Velocity (river-crossing) lab */}
+            <div className="bg-slate-800/60 backdrop-blur-sm rounded-2xl p-5 border border-slate-700/50">
+              <h2 className="text-xl font-bold mb-4 text-sky-400 flex items-center gap-2">
+                <Waves size={20} /> Relative Velocity Lab
+              </h2>
+              {!riverMode ? (
+                <>
+                  <p className="text-xs text-gray-400 mb-3">
+                    Add a river current to a boat's velocity and find the resulting
+                    ground track, crossing time, and downstream drift.
+                  </p>
+                  <button
+                    onClick={() => setRiverMode(true)}
+                    className="w-full bg-sky-600 hover:bg-sky-500 py-3 rounded-lg font-semibold transition-all"
+                  >
+                    Open River-Crossing Lab
+                  </button>
+                </>
+              ) : (() => {
+                const river = getRiverSolution();
+                return (
+                  <div className="space-y-3">
+                    <p className="text-xs text-gray-400">
+                      Current flows along +x (downstream). Heading is in the same
+                      convention as above: 90° is straight across, 180° is directly
+                      upstream.
+                    </p>
+                    <div className="grid grid-cols-2 gap-2">
+                      <label className="text-xs text-gray-400">
+                        River width (m)
+                        <input
+                          type="number" step="5" value={riverWidth}
+                          onChange={(e) => setRiverWidth(parseFloat(e.target.value) || 0)}
+                          className="w-full mt-1 bg-slate-900/60 border border-slate-600 rounded px-2 py-1 text-white text-sm"
+                        />
+                      </label>
+                      <label className="text-xs text-gray-400">
+                        Current speed (m/s)
+                        <input
+                          type="number" step="0.5" value={currentSpeed}
+                          onChange={(e) => setCurrentSpeed(parseFloat(e.target.value) || 0)}
+                          className="w-full mt-1 bg-slate-900/60 border border-slate-600 rounded px-2 py-1 text-white text-sm"
+                        />
+                      </label>
+                      <label className="text-xs text-gray-400">
+                        Boat speed rel. to water (m/s)
+                        <input
+                          type="number" step="0.5" value={boatSpeed}
+                          onChange={(e) => setBoatSpeed(parseFloat(e.target.value) || 0)}
+                          className="w-full mt-1 bg-slate-900/60 border border-slate-600 rounded px-2 py-1 text-white text-sm"
+                        />
+                      </label>
+                      <label className="text-xs text-gray-400">
+                        Boat heading ({angleUnitLabel})
+                        <input
+                          type="number" step="1" value={toDisplayAngle(boatHeading).toFixed(1)}
+                          onChange={(e) => {
+                            const v = parseFloat(e.target.value);
+                            if (!Number.isNaN(v)) setBoatHeading(fromDisplayAngle(v));
+                          }}
+                          className="w-full mt-1 bg-slate-900/60 border border-slate-600 rounded px-2 py-1 text-white text-sm"
+                        />
+                      </label>
+                    </div>
+
+                    <div className="bg-slate-900/60 rounded-lg p-3 text-xs font-mono space-y-1">
+                      <div>Ground velocity: ({river.groundVec.x.toFixed(2)}, {river.groundVec.y.toFixed(2)}) m/s</div>
+                      <div>Ground speed: {river.groundSpeed.toFixed(2)} m/s at {toDisplayAngle(river.groundAngle).toFixed(1)}°</div>
+                      {river.canCross ? (
+                        <>
+                          <div className="text-emerald-400">Crossing time: {river.crossTime.toFixed(1)} s</div>
+                          <div className={Math.abs(river.drift) < 0.5 ? 'text-emerald-400' : 'text-yellow-400'}>
+                            Downstream drift: {river.drift.toFixed(1)} m
+                          </div>
+                        </>
+                      ) : (
+                        <div className="text-red-400">This heading gives zero (or negative) across-river progress — the boat never reaches the far bank.</div>
+                      )}
+                      {showWorking && (
+                        <div className="pt-1 border-t border-slate-600/60 text-gray-400">
+                          <div>Vboat = ({river.boatVec.x.toFixed(2)}, {river.boatVec.y.toFixed(2)}) m/s</div>
+                          <div>Vground = Vcurrent + Vboat = ({currentSpeed.toFixed(1)} + {river.boatVec.x.toFixed(2)}, 0 + {river.boatVec.y.toFixed(2)})</div>
+                          {river.canCross && <div>t = width / Vground,y = {riverWidth} / {river.groundVec.y.toFixed(2)} = {river.crossTime.toFixed(1)} s</div>}
+                        </div>
+                      )}
+                    </div>
+
+                    <button
+                      onClick={solveZeroDrift}
+                      className="w-full bg-emerald-600 hover:bg-emerald-500 py-2 rounded-lg text-sm font-semibold transition-all"
+                    >
+                      Solve heading for zero drift
+                    </button>
+                    <button
+                      onClick={() => setRiverMode(false)}
+                      className="w-full bg-slate-700 hover:bg-slate-600 py-2 rounded-lg text-sm transition-all"
+                    >
+                      Exit River Lab
+                    </button>
+                  </div>
+                );
+              })()}
+            </div>
+
+            {/* Added: Equilibrium (three-force) lab */}
+            <div className="bg-slate-800/60 backdrop-blur-sm rounded-2xl p-5 border border-slate-700/50">
+              <h2 className="text-xl font-bold mb-4 text-orange-400 flex items-center gap-2">
+                <Scale size={20} /> Equilibrium Lab
+              </h2>
+              {!equilibriumMode ? (
+                <>
+                  <p className="text-xs text-gray-400 mb-3">
+                    Two forces are given. Find the magnitude and angle of the third
+                    force that brings the net force to zero.
+                  </p>
+                  <button
+                    onClick={generateEquilibriumProblem}
+                    className="w-full bg-orange-600 hover:bg-orange-500 py-3 rounded-lg font-semibold transition-all"
+                  >
+                    New Problem
+                  </button>
+                </>
+              ) : (
+                <div className="space-y-3">
+                  <div className="bg-slate-900/60 rounded-lg p-3 text-xs font-mono space-y-1">
+                    <div>F1 = {eqForces.f1.V} units at {toDisplayAngle(eqForces.f1.theta).toFixed(1)}°</div>
+                    <div>F2 = {eqForces.f2.V} units at {toDisplayAngle(eqForces.f2.theta).toFixed(1)}°</div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2">
+                    <label className="text-xs text-gray-400">
+                      F3 magnitude
+                      <input
+                        type="number" step="0.1" value={eqGuess.V}
+                        onChange={(e) => setEqGuess({ ...eqGuess, V: e.target.value })}
+                        className="w-full mt-1 bg-slate-900/60 border border-slate-600 rounded px-2 py-1 text-white text-sm"
+                        placeholder="?"
+                      />
+                    </label>
+                    <label className="text-xs text-gray-400">
+                      F3 angle ({angleUnitLabel})
+                      <input
+                        type="number" step="1" value={eqGuess.theta}
+                        onChange={(e) => setEqGuess({ ...eqGuess, theta: e.target.value })}
+                        className="w-full mt-1 bg-slate-900/60 border border-slate-600 rounded px-2 py-1 text-white text-sm"
+                        placeholder="?"
+                      />
+                    </label>
+                  </div>
+
+                  {eqFeedback && (
+                    <div className={`flex items-start gap-2 text-sm p-2 rounded-lg ${
+                      eqFeedback.correct ? 'bg-emerald-900/40 text-emerald-300' : 'bg-red-900/40 text-red-300'
+                    }`}>
+                      {eqFeedback.correct ? <CheckCircle2 size={16} className="mt-0.5 shrink-0" /> : <XCircle size={16} className="mt-0.5 shrink-0" />}
+                      <span>{eqFeedback.message}</span>
+                    </div>
+                  )}
+
+                  <div className="flex gap-2">
+                    <button
+                      onClick={checkEquilibriumGuess}
+                      className="flex-1 bg-emerald-600 hover:bg-emerald-500 py-2 rounded-lg text-sm font-semibold transition-all"
+                    >
+                      Check
+                    </button>
+                    <button
+                      onClick={() => setEqSolved(!eqSolved)}
+                      className="flex-1 bg-slate-700 hover:bg-slate-600 py-2 rounded-lg text-sm font-semibold transition-all"
+                    >
+                      {eqSolved ? 'Hide' : 'Reveal'} Solution
+                    </button>
+                  </div>
+
+                  {eqSolved && (() => {
+                    const sol = getEquilibriumSolution();
+                    return (
+                      <div className="text-xs font-mono text-gray-300 bg-slate-900/60 rounded-lg p-3 space-y-1">
+                        <div>ΣF (F1+F2) = ({sol.sumX.toFixed(2)}, {sol.sumY.toFixed(2)})</div>
+                        <div>F3 = −ΣF = ({sol.f3x.toFixed(2)}, {sol.f3y.toFixed(2)})</div>
+                        <div>|F3| = {sol.f3V.toFixed(2)}, angle = {toDisplayAngle(sol.f3theta).toFixed(1)}°</div>
+                      </div>
+                    );
+                  })()}
+
+                  <button
+                    onClick={() => {
+                      setEquilibriumMode(false);
+                      setEqFeedback(null);
+                    }}
+                    className="w-full bg-slate-700 hover:bg-slate-600 py-2 rounded-lg text-sm transition-all"
+                  >
+                    Exit Equilibrium Lab
+                  </button>
+                </div>
+              )}
+            </div>
           </div>
         </div>
 
@@ -883,6 +1308,28 @@ const VectorAdditionPlayground = () => {
               <p className="text-gray-300">
                 Given V and θ, predict Vx and Vy yourself before checking — feedback calls out
                 sign errors by quadrant instead of just marking you wrong.
+              </p>
+            </div>
+            <div>
+              <h3 className="font-semibold text-emerald-400 mb-2">🧭 Angle Convention</h3>
+              <p className="text-gray-300">
+                Switch every angle field in the app between standard math angle (° CCW from +x)
+                and compass bearing (° CW from North) — the underlying vector doesn't change,
+                only how its angle is read and entered.
+              </p>
+            </div>
+            <div>
+              <h3 className="font-semibold text-emerald-400 mb-2">🌊 Relative Velocity Lab</h3>
+              <p className="text-gray-300">
+                Combine a river current with a boat's velocity to find ground speed, crossing
+                time, and downstream drift — or solve directly for the heading that cancels drift.
+              </p>
+            </div>
+            <div>
+              <h3 className="font-semibold text-emerald-400 mb-2">⚖️ Equilibrium Lab</h3>
+              <p className="text-gray-300">
+                Given two forces, find the third that zeroes the net force. Check your own
+                answer against the residual, or reveal the worked solution.
               </p>
             </div>
           </div>
