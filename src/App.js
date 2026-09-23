@@ -732,7 +732,10 @@ const VectorAdditionPlayground = () => {
 
         <div className="grid grid-cols-1 lg:grid-cols-[1fr_300px] gap-6">
           {/* Main Canvas Area */}
-          <div className="space-y-4">
+          {/* Added: sticky on large screens so the canvas stays in view while the
+              (now much taller) sidebar scrolls past, instead of leaving blank
+              space below a short left column. */}
+          <div className="space-y-4 lg:sticky lg:top-6 lg:self-start">
             <div className="bg-slate-800/60 backdrop-blur-sm rounded-2xl p-4 border border-slate-700/50">
               <canvas
                 ref={canvasRef}
